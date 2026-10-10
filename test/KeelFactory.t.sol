@@ -213,9 +213,10 @@ contract KeelFactoryTest is KeelTestBase {
 
 contract HookMinerTest is KeelTestBase {
     function testFuzzMinerAddressAndMeasuredGas(bytes32 initHash, uint32 start) public view {
+        // Read the factory address before measuring so the storage load is not counted as search gas.
+        address deployer = address(factory);
         uint256 beforeGas = gasleft();
-        (bytes32 salt, address predicted, uint256 attempts) =
-            HookMiner.find(address(factory), initHash, start);
+        (bytes32 salt, address predicted, uint256 attempts) = HookMiner.find(deployer, initHash, start);
         uint256 consumed = beforeGas - gasleft();
         assertEq(
             predicted,
