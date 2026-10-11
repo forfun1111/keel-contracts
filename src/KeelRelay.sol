@@ -6,6 +6,25 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 interface IKeelRelayVault {
+    /// @dev ABI-identical to KeelVault.Project (its Phase enum is a uint8).
+    struct Project {
+        address creator;
+        uint8 phase;
+        bool creatorActive;
+        uint16 creatorBps;
+        uint64 launchedAt;
+        uint64 closeNotice;
+        uint256 basket;
+        uint256 creatorAccrued;
+        uint256 snapshotBlock;
+        uint256 poolAtClose;
+        uint256 circulating;
+        uint256 totalClaimed;
+        bytes32 jobHash;
+        bytes32 projectHash;
+    }
+
+    function project(address token) external view returns (Project memory);
     function reimburse(address token, bytes32 jobRef, bytes32 commit, uint256 amount) external;
     function recordRun(address token, bytes32 jobRef, bytes32 commit) external;
 }
@@ -15,13 +34,15 @@ interface IKeelRelayHook {
 }
 
 /// @notice The KeelVault verifier, so that the people who gain from a verified run pay its gas.
-/// The Keel server checks each IMD continuation off chain and signs one voucher per run; anyone
-/// (normally the creator) submits it here and this contract makes the vault call. The vault still
-/// pays only the creator recorded on chain and still uses each jobRef once, so a voucher can be
-/// submitted by anyone, but only once.
-/// A voucher with an amount reimburses it from the basket after moving the hook's pending fees in;
-/// a voucher with amount 0 records the run without a payout (the vault allows that only while the
-/// basket cannot pay a run, or the creator is inactive).
+/// The Keel server checks each IMD continuation off chain and signs vouchers for each run; the
+/// creator submits one here and this contract makes the vault call. The vault still pays only the
+/// creator recorded on chain and still uses each jobRef once.
+/// A voucher with an amount reimburses it from the basket; anyone may submit it, since the payout
+/// can only reach the creator. A voucher with amount 0 records the run without a payout and uses up
+/// its jobRef for good, so only the token's creator or the relay owner may submit it: published
+/// vouchers must not let a stranger cancel a creator's payout while the basket is still filling.
+/// Both kinds first move the hook's pending fees into the basket, so the vault's "the basket cannot
+/// pay a run" rule for recording sees every fee already earned.
 contract KeelRelay is Ownable2Step, EIP712 {
     bytes32 public constant RUN_TYPEHASH =
         keccak256("Run(address token,bytes32 jobRef,bytes32 commit,uint256 amount)");
@@ -32,6 +53,7 @@ contract KeelRelay is Ownable2Step, EIP712 {
 
     error InvalidAddress();
     error InvalidSignature();
+    error RecordNotAllowed();
 
     event SignerSet(address indexed signer);
     event RunSubmitted(address indexed token, bytes32 indexed jobRef, address indexed sender, uint256 amount);
@@ -81,11 +103,14 @@ contract KeelRelay is Ownable2Step, EIP712 {
         ) {
             revert InvalidSignature();
         }
+        if (amount == 0 && msg.sender != owner() && msg.sender != vault.project(token).creator) {
+            revert RecordNotAllowed();
+        }
         emit RunSubmitted(token, jobRef, msg.sender, amount);
+        hook.distribute(token);
         if (amount == 0) {
             vault.recordRun(token, jobRef, commit);
         } else {
-            hook.distribute(token);
             vault.reimburse(token, jobRef, commit, amount);
         }
     }

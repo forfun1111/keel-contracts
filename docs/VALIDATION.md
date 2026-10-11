@@ -7,7 +7,7 @@ Checked on 2026-10-10 with Foundry 1.8.5 and the compiler pinned by `foundry.tom
 | Command | Result |
 | --- | --- |
 | `forge build` | Pass; 115 source files compiled with the pinned compiler. |
-| `forge test -vv` | Pass; 61 checks across 10 suites, zero failures or skips. |
+| `forge test -vv` | Pass; 61 checks across 10 suites, zero failures or skips. Re-run on 2026-10-11 with Foundry 1.5.1 after the KeelRelay record guard: 75 checks across 11 suites, zero failures. |
 | `forge fmt --check` | Pass. |
 
 There are 60 unit/fuzz test functions and four invariant properties, which this Foundry version reports together as one additional invariant check. Fuzz tests use 256 runs. The invariant campaign uses 128 runs of depth 64, with **8,192 calls and zero handler reverts**, and `fail_on_revert = true`.
