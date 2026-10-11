@@ -23,6 +23,7 @@ Tests execute the real vendored v4 `PoolManager`, including its flash accounting
 | `KeelHook` | Only-factory pool initialization/liquidity addition, 1% swap fees and permissionless distribution. Deployed by the factory constructor. |
 | `KeelFactory` | EIP-712 launch authorization, canonical job IDs, token cloning, pool creation and permanent liquidity locking. Starts paused. |
 | `KeelRouter` | Exact-input routes between native ETH, IMD and launched tokens; deadlines, minimum outputs and read-only execution quotes. |
+| `KeelRelay` | Optional vault verifier added after the launch: submits server-signed run vouchers so the caller, not the server, pays the gas. See below. |
 
 The vault, factory and router each receive the supplied `$owner` and use OpenZeppelin 5 `Ownable2Step`. Ownership changes require `transferOwnership(newOwner)` followed by `acceptOwnership()` from the proposed owner. Their ownership is separate: transfer each contract individually. Inherited `renounceOwnership()` permanently gives up that contract's administrative powers; renouncing the vault also makes future team withdrawals unavailable.
 
@@ -152,3 +153,33 @@ For v4 integration background, see Uniswap's [custom accounting documentation](h
 The owner selects launch authorization, tick bounds, ETH market, verifier and run price; can stop new launches, redirect inactive creators' future shares to their baskets, and initiate closing subject to the public delays. It cannot raise a creator's chosen share, withdraw a basket, alter a closed snapshot, remove liquidity or upgrade these contracts. The signer controls launch admission; the verifier controls which eligible work is paid. Operate these roles with separately reviewed access controls and a documented key-rotation/revocation process.
 
 Before production use, independently review the contracts and the exact deployment, verify source/bytecode and role ownership on the explorer, check IMD behavior and ETH/IMD liquidity, simulate gas for the exact constructor, and exercise the post-deployment setup. The local tests and adversarial checks are not an independent security audit. No keys, live transactions or funded wallet operations were used in this assignment.
+
+## KeelRelay
+
+`KeelRelay` is deployed separately, after the core contracts, and made the vault's verifier with
+`KeelVault.setVerifier(relay)`. The Keel server then sends no transactions: it checks each IMD
+continuation off chain and signs an EIP-712 voucher (domain `KeelRelay`, version `1`):
+
+```
+Run(address token, bytes32 jobRef, bytes32 commit, uint256 amount)
+```
+
+Anyone, normally the creator, calls `submit(token, jobRef, commit, amount, signature)` and pays its gas.
+
+- `amount > 0`: `hook.distribute(token)` moves the pending fees into the basket, then
+  `vault.reimburse(token, jobRef, commit, amount)` pays the creator recorded in the vault.
+- `amount == 0`: `vault.recordRun(token, jobRef, commit)` records the run without a payout.
+
+Every vault rule still applies (active creator, amount at most `runPrice`, enough basket, each `jobRef`
+once), so a voucher cannot pay anyone but the creator and cannot be used twice. A payout voucher that
+reverts with `InsufficientBasket` can be submitted again once trading has refilled the basket.
+
+| Constructor argument | Value |
+| --- | --- |
+| `owner_` | the team owner |
+| `vault_` | KeelVault |
+| `hook_` | KeelHook (`KeelFactory.hook()`) |
+| `signer_` | the server's voucher key |
+
+The owner can rotate the key with `setSigner` or stop every outstanding voucher with `revokeSigner`.
+`test/KeelRelay.t.sol` covers it against the real vault, hook and PoolManager.
