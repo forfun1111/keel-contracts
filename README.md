@@ -164,15 +164,23 @@ continuation off chain and signs an EIP-712 voucher (domain `KeelRelay`, version
 Run(address token, bytes32 jobRef, bytes32 commit, uint256 amount)
 ```
 
-Anyone, normally the creator, calls `submit(token, jobRef, commit, amount, signature)` and pays its gas.
+The caller, normally the creator, calls `submit(token, jobRef, commit, amount, signature)` and pays its
+gas. Both kinds first call `hook.distribute(token)`, which moves the pending fees into the basket.
 
-- `amount > 0`: `hook.distribute(token)` moves the pending fees into the basket, then
-  `vault.reimburse(token, jobRef, commit, amount)` pays the creator recorded in the vault.
-- `amount == 0`: `vault.recordRun(token, jobRef, commit)` records the run without a payout.
+- `amount > 0`: `vault.reimburse(token, jobRef, commit, amount)` pays the creator recorded in the vault.
+  Anyone may submit it.
+- `amount == 0`: `vault.recordRun(token, jobRef, commit)` records the run without a payout. Only the
+  token's creator (read from `vault.project(token)`) or the relay owner may submit it; anyone else gets
+  `RecordNotAllowed`. A recorded run uses up its `jobRef`, so without this rule anyone who read a
+  published record voucher could cancel the creator's payout while the basket is still filling.
 
 Every vault rule still applies (active creator, amount at most `runPrice`, enough basket, each `jobRef`
-once), so a voucher cannot pay anyone but the creator and cannot be used twice. A payout voucher that
-reverts with `InsufficientBasket` can be submitted again once trading has refilled the basket.
+once, recording only while the basket cannot pay a run), so a voucher cannot pay anyone but the creator
+and cannot be used twice. Because pending fees are distributed first, the recording rule sees every fee
+already earned. A payout voucher that reverts with `InsufficientBasket` can be submitted again once
+trading has refilled the basket.
+
+Remix/Etherscan deployment files and instructions are in [`deploy/relay/`](deploy/relay/DEPLOY.md).
 
 | Constructor argument | Value |
 | --- | --- |

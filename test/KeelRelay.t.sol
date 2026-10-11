@@ -105,6 +105,49 @@ contract KeelRelayTest is KeelTestBase {
         _solvent();
     }
 
+    function testStrangerCannotCancelAPayoutWithTheRecordVoucher() public {
+        // The basket is empty, so the payout waits; the published record voucher must not burn the run.
+        bytes memory record = _voucher(VOUCHER_KEY, RUN1, 0);
+        vm.prank(bob);
+        vm.expectRevert(KeelRelay.RecordNotAllowed.selector);
+        relay.submit(token, RUN1, COMMIT, 0, record);
+        assertFalse(vault.jobUsed(RUN1));
+        // Trading fills the basket and the creator's payout voucher still pays.
+        _buy(alice, 100 ether);
+        _submit(bob, RUN1, 0.5 ether);
+        assertEq(imd.balanceOf(creator), 0.5 ether);
+        _solvent();
+    }
+
+    function testCreatorAndOwnerMayRecordWhileTheBasketIsShort() public {
+        _submit(creator, RUN1, 0);
+        assertTrue(vault.jobUsed(RUN1));
+        relay.submit(token, RUN2, COMMIT, 0, _voucher(VOUCHER_KEY, RUN2, 0));
+        assertTrue(vault.jobUsed(RUN2));
+        assertEq(imd.balanceOf(creator), 0);
+    }
+
+    function testRecordCountsPendingFeesBeforeDecidingTheBasketCannotPay() public {
+        // 100 IMD bought: the 1 IMD fee waits in the hook and would put 0.6 IMD in the basket.
+        _buy(alice, 100 ether);
+        assertEq(vault.project(token).basket, 0);
+        bytes memory record = _voucher(VOUCHER_KEY, RUN1, 0);
+        vm.prank(creator);
+        vm.expectRevert(KeelVault.ReimbursementAvailable.selector);
+        relay.submit(token, RUN1, COMMIT, 0, record);
+        assertFalse(vault.jobUsed(RUN1));
+        _submit(creator, RUN1, 0.5 ether);
+        assertEq(imd.balanceOf(creator), 0.5 ether);
+    }
+
+    function testRecordVoucherForAnUnknownTokenIsRefused() public {
+        bytes32 digest = relay.runDigest(alice, RUN1, COMMIT, 0);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(VOUCHER_KEY, digest);
+        vm.prank(bob);
+        vm.expectRevert(KeelRelay.RecordNotAllowed.selector);
+        relay.submit(alice, RUN1, COMMIT, 0, abi.encodePacked(r, s, v));
+    }
+
     function testOnlyOwnerRotatesOrRevokesTheSigner() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
